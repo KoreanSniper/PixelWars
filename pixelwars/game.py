@@ -47,6 +47,7 @@ MAX_ATTACK_COST = 120
 TROOPS_PER_PIXEL_CAP = 120
 TEMP_OPERATION_GRACE = 60.0
 TEMP_SUPPLY_RADIUS = 12
+TEMP_SUPPLY_CELL_LIMIT = 10
 SUPPLY_COLLAPSE_TIME = 180.0
 SUPPLY_COLLAPSE_FLOOR = 0.25
 SUPPLY_FACTORY_RANGE = 8
@@ -1883,6 +1884,8 @@ class PixelWars:
 
     def operation_temporary_supply_covers(self, operation: Operation | None, x: int, y: int) -> bool:
         if operation is None or operation.age >= operation.supply_grace:
+            return False
+        if operation.cells is not None and len(operation.cells) >= TEMP_SUPPLY_CELL_LIMIT:
             return False
         anchors: list[tuple[int, int]] = []
         if operation.focus is not None:
