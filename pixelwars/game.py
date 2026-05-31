@@ -379,6 +379,7 @@ class PixelWars:
         self.show_owner_borders = False
         self.show_ai_traits = False
         self.show_operation_info = False
+        self.show_field_help = False
         self.territory_images_enabled = True
         self.territory_image_file: str | None = None
         self.territory_image_mode = "tile"
@@ -389,6 +390,7 @@ class PixelWars:
         self.pause_buttons: list[tuple[str, pygame.Rect]] = []
         self.pause_menu_page = "main"
         self.world_log: list[str] = []
+        self.lobby_bg_time = 0.0
         self.operation_percent = 0.25
         self.status = "좌클릭으로 작전 생성, 우클릭으로 작전 메뉴"
         self.slider_drag = False
@@ -995,7 +997,11 @@ class PixelWars:
                 elif event.key == pygame.K_F9:
                     self.open_save_picker()
                 elif event.key == pygame.K_f:
-                    self.buy_aircraft("fighter")
+                    if event.mod & pygame.KMOD_SHIFT:
+                        self.buy_aircraft("fighter")
+                    else:
+                        self.show_field_help = not self.show_field_help
+                        self.status = f"전투함 설명 레이어 {'켜짐' if self.show_field_help else '꺼짐'}"
                 elif event.key == pygame.K_b:
                     self.buy_aircraft("bomber")
                 elif event.key == pygame.K_n:
@@ -1242,6 +1248,7 @@ class PixelWars:
             self.build(action, x, y)
 
     def update(self, dt: float) -> None:
+        self.lobby_bg_time += dt
         self.update_camera(dt)
         self.update_online_status()
         if self.screen_mode == "lobby":
@@ -2660,7 +2667,7 @@ class PixelWars:
         player = self.factions[PLAYER_ID]
         return [
             f"버전: {GAME_VERSION}",
-            f"맵: {self.map_files[self.map_index].name} (1/2 이동, R 랜덤)",
+            f"맵: {self.map_files[self.map_index].stem} (1/2 이동, R 랜덤)",
             f"돈: {player.money}   병력: {player.troops}/{self.troop_capacity(PLAYER_ID)}",
             f"전투기: {player.fighters}  폭격기: {player.bombers}",
             f"전투함: {player.ships}",
@@ -2680,7 +2687,7 @@ class PixelWars:
             "ESC: 일시정지   L: 로비   -/=: 속도",
             "좌클릭: 수도 선택/작전 생성",
             "우클릭: 작전/건설 메뉴",
-            "F/B/N: 전투기/폭격기/전투함 구매",
+            "F: 전투함 설명  Shift+F/B/N: 전투기/폭격기/전투함",
             "",
             "좌클릭 작전 투입 병력",
         ]
@@ -2791,6 +2798,7 @@ class PixelWars:
             "show_support_zones": self.show_support_zones,
             "show_ai_traits": self.show_ai_traits,
             "show_operation_info": self.show_operation_info,
+            "show_field_help": self.show_field_help,
             "territory_images_enabled": self.territory_images_enabled,
             "territory_image_file": self.territory_image_file,
             "territory_image_mode": self.territory_image_mode,
@@ -3018,6 +3026,7 @@ class PixelWars:
             self.show_support_zones = "full"
         self.show_ai_traits = data.get("show_ai_traits", False)
         self.show_operation_info = data.get("show_operation_info", False)
+        self.show_field_help = data.get("show_field_help", False)
         self.territory_images_enabled = data.get("territory_images_enabled", True)
         self.territory_image_file = data.get("territory_image_file")
         self.territory_image_mode = data.get("territory_image_mode", "tile")
@@ -3046,6 +3055,7 @@ class PixelWars:
         self.screen.set_clip(self.map_view_rect)
         self.screen.blit(self.map_surface, (int(self.camera_x), int(self.camera_y)))
         self.draw_terrain_overlay()
+        self.draw_terrain_labels()
         self.draw_ownership()
         self.draw_fallout()
         if self.show_support_zones != "off":
@@ -3056,10 +3066,13 @@ class PixelWars:
             self.draw_buildings()
         self.draw_units()
         self.screen.set_clip(None)
+        self.draw_top_world_log()
         pygame.draw.rect(self.screen, (25, 29, 38), self.panel_rect())
         self.draw_panel()
         if self.menu:
             self.draw_menu()
+        if self.show_field_help:
+            self.draw_field_help()
         if self.show_help:
             self.draw_help()
         if self.show_save_picker:
@@ -3078,7 +3091,16 @@ class PixelWars:
             self.map_surface,
             (int(self.map_surface.get_width() * preview_scale), int(self.map_surface.get_height() * preview_scale)),
         )
-        self.screen.blit(preview, preview.get_rect(center=preview_rect.center))
+        drift_x = int(math.sin(self.lobby_bg_time * 0.18) * 14)
+        self.screen.blit(preview, preview.get_rect(center=(preview_rect.centerx + drift_x, preview_rect.centery)))
+        cloud = pygame.Surface((260, 70), pygame.SRCALPHA)
+        pygame.draw.ellipse(cloud, (245, 250, 255, 22), (0, 16, 130, 38))
+        pygame.draw.ellipse(cloud, (245, 250, 255, 18), (70, 0, 150, 52))
+        pygame.draw.ellipse(cloud, (245, 250, 255, 16), (145, 22, 115, 34))
+        for i, (base_y, speed, alpha) in enumerate(((92, 10, 38), (238, 6, 28), (614, 8, 24))):
+            x = int((self.lobby_bg_time * speed + i * 360) % (SCREEN_W + 320)) - 300
+            cloud.set_alpha(alpha)
+            self.screen.blit(cloud, (x, base_y))
         shade = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
         shade.fill((6, 10, 18, 190))
         self.screen.blit(shade, (0, 0))
@@ -3098,7 +3120,7 @@ class PixelWars:
         pygame.draw.rect(self.screen, (28, 34, 46), info_rect, border_radius=8)
         pygame.draw.rect(self.screen, (96, 116, 150), info_rect, 1, border_radius=8)
         lines = [
-            f"선택 맵: {self.map_files[self.map_index].name}",
+            f"선택 맵: {self.map_files[self.map_index].stem}",
             f"맵 크기: {self.map_size_label()} ({self.width}x{self.height})",
             f"전쟁 규모: {self.ai_count_label()} (AI {self.ai_count}명)",
             f"전략 템포: {self.pace_label()} - {self.pace_description()}",
@@ -3218,6 +3240,35 @@ class PixelWars:
     def draw_terrain_overlay(self) -> None:
         overlay = pygame.transform.scale(self.terrain_overlay, self.map_surface.get_size())
         self.screen.blit(overlay, (int(self.camera_x), int(self.camera_y)))
+
+    def draw_terrain_labels(self) -> None:
+        zoom = self.scale / max(0.001, self.base_scale)
+        if zoom < 1.15:
+            return
+        start_x, end_x, start_y, end_y = self.visible_cell_bounds()
+        step = max(10, int(70 / max(0.6, zoom)))
+        labels = {"mountain": ("산맥", (218, 224, 232)), "desert": ("사막", (255, 221, 150))}
+        drawn = {"mountain": 0, "desert": 0}
+        for terrain in ("mountain", "desert"):
+            for x in range(start_x + step // 2, end_x, step):
+                if drawn[terrain] >= 8:
+                    break
+                for y in range(start_y + step // 2, end_y, step):
+                    if drawn[terrain] >= 8:
+                        break
+                    if self.terrain[x][y] != terrain:
+                        continue
+                    sx, sy = self.cell_to_screen(x + 0.5, y + 0.5)
+                    if not self.map_view_rect.collidepoint(sx, sy):
+                        continue
+                    label, color = labels[terrain]
+                    text = self.small.render(label, True, color)
+                    pad_rect = text.get_rect(center=(sx, sy)).inflate(10, 4)
+                    label_bg = pygame.Surface(pad_rect.size, pygame.SRCALPHA)
+                    label_bg.fill((12, 14, 20, 105))
+                    self.screen.blit(label_bg, pad_rect.topleft)
+                    self.screen.blit(text, text.get_rect(center=pad_rect.center))
+                    drawn[terrain] += 1
 
     def draw_buildings(self) -> None:
         icons = {"city": "C", "factory": "F", "supply": "R", "airbase": "A", "port": "P", "sam": "M"}
@@ -3730,6 +3781,46 @@ class PixelWars:
             y += 20
         return y
 
+    def draw_top_world_log(self) -> None:
+        if not self.world_log:
+            return
+        x = 20
+        y = 16
+        max_width = self.map_view_rect.w - 40
+        for i, line in enumerate(self.world_log[:3]):
+            if len(line) > 38:
+                line = line[:37] + "..."
+            text = self.font.render(line, True, (255, 226, 160))
+            rect = text.get_rect(topleft=(x, y + i * 28)).inflate(18, 8)
+            rect.w = min(rect.w, max_width)
+            bg = pygame.Surface(rect.size, pygame.SRCALPHA)
+            bg.fill((18, 22, 30, max(95, 155 - i * 35)))
+            self.screen.blit(bg, rect.topleft)
+            self.screen.blit(text, (rect.x + 9, rect.y + 4))
+
+    def draw_field_help(self) -> None:
+        rect = pygame.Rect(28, 86, 390, 254)
+        panel = pygame.Surface(rect.size, pygame.SRCALPHA)
+        panel.fill((27, 32, 44, 224))
+        self.screen.blit(panel, rect.topleft)
+        pygame.draw.rect(self.screen, (120, 146, 184), rect, 1, border_radius=8)
+        title = self.font.render("전투함 / 지형 레이어", True, (244, 248, 255))
+        self.screen.blit(title, (rect.x + 18, rect.y + 16))
+        lines = [
+            "F: 이 설명 레이어 켜기/끄기",
+            "N: 전투함 구매, 바다 우클릭 > 전투함 배치",
+            "전투함은 항구가 있어야 구매할 수 있습니다.",
+            "적 상륙선이 근처로 오면 요격해 침몰시킵니다.",
+            "Shift+F: 전투기 구매, B: 폭격기 구매",
+            "산맥/사막은 지도 위에 작은 라벨로 표시됩니다.",
+            "산맥/사막에서는 진격 속도가 20% 느려집니다.",
+        ]
+        y = rect.y + 52
+        for line in lines:
+            text = self.small.render(line, True, (224, 232, 244))
+            self.screen.blit(text, (rect.x + 18, y))
+            y += 25
+
     def draw_menu(self) -> None:
         assert self.menu
         h = 34 + len(self.menu.options) * 30
@@ -3784,6 +3875,7 @@ class PixelWars:
                     "F5로 .pxw 저장, F9로 저장 선택 창을 엽니다.",
                     "G로 건물 표시, T로 영토 이미지 표시를 켜고 끕니다.",
                     "C로 AI 성향, V로 보급, E로 작전 정보를 따로 표시합니다.",
+                    "F로 전투함 구매 설명과 지형 안내 레이어를 켜고 끕니다.",
                     "저장 선택 창은 맵, 전쟁 규모, 템포, 병력 요약을 함께 보여줍니다.",
                     "ESC로 일시정지 메뉴를 열고, L로 새 로비로 돌아갈 수 있습니다.",
                     "-와 = 키로 게임 속도를 0.5x~4x 사이에서 조절합니다. 온라인 참가자가 있으면 1x 고정입니다.",
@@ -3836,7 +3928,7 @@ class PixelWars:
                     "항구: 해변에만 건설 가능하며 돈을 벌고 전투함 구매 조건이 됩니다.",
                     "도시: 돈과 병력을 생산하며 최대 5레벨까지 올릴 수 있습니다.",
                     "방공미사일기지: 근처 항공기를 80% 확률로 격추합니다.",
-                    "F 전투기 구매, B 폭격기 구매, N 전투함 구매",
+                    "Shift+F 전투기 구매, B 폭격기 구매, N 전투함 구매",
                 ],
             ),
         ]
