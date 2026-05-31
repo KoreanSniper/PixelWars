@@ -13,6 +13,7 @@ RELEASES_URL = "https://api.github.com/repos/KoreanSniper/PixelWars/releases"
 INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "PixelWars"
 TARGET_EXE = INSTALL_DIR / "PixelWars.exe"
 VERSION_FILE = INSTALL_DIR / "version.txt"
+PRESERVED_DIR_NAMES = ("saves", "territory_images")
 
 
 def version_key(version: str) -> tuple[int, int, int, int]:
@@ -105,13 +106,48 @@ def stop_running_game() -> None:
     )
 
 
+def backup_user_data() -> Path | None:
+    existing = [INSTALL_DIR / name for name in PRESERVED_DIR_NAMES if (INSTALL_DIR / name).exists()]
+    if not existing:
+        return None
+    backup_root = INSTALL_DIR.with_name("PixelWars_user_data_backup")
+    if backup_root.exists():
+        shutil.rmtree(backup_root)
+    backup_root.mkdir(parents=True, exist_ok=True)
+    for source in existing:
+        target = backup_root / source.name
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy2(source, target)
+    return backup_root
+
+
+def restore_user_data(backup_root: Path | None) -> None:
+    if backup_root is None or not backup_root.exists():
+        return
+    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+    for item in backup_root.iterdir():
+        target = INSTALL_DIR / item.name
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.move(str(item), str(target))
+    shutil.rmtree(backup_root, ignore_errors=True)
+
+
 def reinstall(latest_version: str, download_url: str) -> None:
     stop_running_game()
-    if INSTALL_DIR.exists():
-        shutil.rmtree(INSTALL_DIR)
-    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    download(download_url, TARGET_EXE)
-    VERSION_FILE.write_text(latest_version, encoding="utf-8")
+    backup_root = backup_user_data()
+    try:
+        if INSTALL_DIR.exists():
+            shutil.rmtree(INSTALL_DIR)
+        INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+        restore_user_data(backup_root)
+        download(download_url, TARGET_EXE)
+        VERSION_FILE.write_text(latest_version, encoding="utf-8")
+    except Exception:
+        restore_user_data(backup_root)
+        raise
 
 
 def main() -> int:
