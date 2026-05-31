@@ -25,7 +25,7 @@ SAVE_DIR = USER_ROOT / "saves"
 TERRITORY_IMAGE_DIR = USER_ROOT / "territory_images"
 BUNDLED_TERRITORY_IMAGE_DIR = BUNDLE_ROOT / "territory_images"
 GENERATED_MAP_DIR = USER_ROOT / "maps"
-GAME_VERSION = "v1.0.5-alpha"
+GAME_VERSION = "v1.0.6-alpha"
 SCREEN_W = 1280
 SCREEN_H = 820
 PANEL_W = 300
@@ -39,7 +39,7 @@ MAP_SIZE_OPTIONS = [
 ]
 FPS = 60
 ATTACKS_PER_FRAME = 10
-PIXEL_ATTACK_COST = 0
+PIXEL_ATTACK_COST = 1
 NO_RESISTANCE_TROOPS = 10
 ENEMY_TROOP_COST_RATIO = 0.006
 ENEMY_DENSITY_COST_RATIO = 0.42
@@ -70,6 +70,7 @@ GAME_END_CHECK_INTERVAL = 1.0
 PLAYER_ID = 0
 DEFAULT_AI_COUNT = 20
 AI_COUNT_OPTIONS = [20, 40, 60, 80, 100]
+HUGE_MAP_AI_LIMIT = 60
 AI_COUNT_LABELS = {
     20: "소규모 전쟁",
     40: "표준 전쟁",
@@ -159,6 +160,15 @@ def faction_color(index: int) -> tuple[int, int, int]:
     hue = (index * 137) % 360
     r, g, b = colorsys.hsv_to_rgb(hue / 360, 0.68, 0.92)
     return int(r * 255), int(g * 255), int(b * 255)
+
+
+def safe_color(value: object) -> tuple[int, int, int]:
+    if not isinstance(value, (list, tuple)) or len(value) < 3:
+        return 200, 200, 200
+    try:
+        return tuple(max(0, min(255, int(value[i]))) for i in range(3))  # type: ignore[return-value]
+    except (TypeError, ValueError):
+        return 200, 200, 200
 
 
 AI_PERSONALITIES = {
@@ -536,6 +546,21 @@ class PixelWars:
         self.map_files = self.discover_maps()
         self.load_map(random.randrange(len(self.map_files)))
 
+    def change_map_from_input(self, delta: int | None = None, randomize: bool = False) -> None:
+        if self.screen_mode == "game" and not self.choosing_capital:
+            self.status = "진행 중 맵 변경 차단: 로비로 나가서 변경하세요"
+            return
+        if self.online_lobby_active():
+            self.status = "온라인 연결 중에는 맵 변경을 할 수 없습니다"
+            return
+        if randomize:
+            self.load_random_map()
+            self.status = "로비: 랜덤 맵 선택"
+        elif delta is not None:
+            self.load_map(self.map_index + delta)
+            self.status = "로비: 이전 맵 선택" if delta < 0 else "로비: 다음 맵 선택"
+        self.screen_mode = "lobby" if self.screen_mode == "lobby" else self.screen_mode
+
     def discover_maps(self) -> list[Path]:
         map_dirs = [MAP_DIR]
         if GENERATED_MAP_DIR != MAP_DIR:
@@ -904,17 +929,11 @@ class PixelWars:
                     elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
                         self.start_matchmaking()
                     elif event.key == pygame.K_1:
-                        self.load_map(self.map_index - 1)
-                        self.screen_mode = "lobby"
-                        self.status = "로비: 이전 맵 선택"
+                        self.change_map_from_input(delta=-1)
                     elif event.key == pygame.K_2:
-                        self.load_map(self.map_index + 1)
-                        self.screen_mode = "lobby"
-                        self.status = "로비: 다음 맵 선택"
+                        self.change_map_from_input(delta=1)
                     elif event.key == pygame.K_r:
-                        self.load_random_map()
-                        self.screen_mode = "lobby"
-                        self.status = "로비: 랜덤 맵 선택"
+                        self.change_map_from_input(randomize=True)
                     elif event.key == pygame.K_3:
                         self.cycle_map_size()
                     elif event.key == pygame.K_4:
@@ -942,11 +961,11 @@ class PixelWars:
                     else:
                         self.toggle_pause()
                 elif event.key == pygame.K_1:
-                    self.load_map(self.map_index - 1)
+                    self.change_map_from_input(delta=-1)
                 elif event.key == pygame.K_2:
-                    self.load_map(self.map_index + 1)
+                    self.change_map_from_input(delta=1)
                 elif event.key == pygame.K_r:
-                    self.load_random_map()
+                    self.change_map_from_input(randomize=True)
                 elif event.key in (pygame.K_h, pygame.K_F1, pygame.K_SLASH):
                     self.show_help = not self.show_help
                 elif event.key == pygame.K_g:
@@ -1104,17 +1123,11 @@ class PixelWars:
             if action == "match":
                 self.start_matchmaking()
             elif action == "prev_map":
-                self.load_map(self.map_index - 1)
-                self.screen_mode = "lobby"
-                self.status = "로비: 이전 맵 선택"
+                self.change_map_from_input(delta=-1)
             elif action == "next_map":
-                self.load_map(self.map_index + 1)
-                self.screen_mode = "lobby"
-                self.status = "로비: 다음 맵 선택"
+                self.change_map_from_input(delta=1)
             elif action == "random_map":
-                self.load_random_map()
-                self.screen_mode = "lobby"
-                self.status = "로비: 랜덤 맵 선택"
+                self.change_map_from_input(randomize=True)
             elif action == "map_size":
                 self.cycle_map_size()
             elif action == "ai_count":
@@ -1419,6 +1432,7 @@ class PixelWars:
         keys = [key for key, _label, _max_dim in MAP_SIZE_OPTIONS]
         index = keys.index(self.map_size_key) if self.map_size_key in keys else keys.index(DEFAULT_MAP_SIZE_KEY)
         self.map_size_key = keys[(index + direction) % len(keys)]
+        self.enforce_ai_limit_for_map_size()
         self.load_map(self.map_index)
         self.screen_mode = "lobby"
         self.status = f"맵 크기: {self.map_size_label()}"
@@ -1426,9 +1440,14 @@ class PixelWars:
     def cycle_ai_count(self, direction: int = 1) -> None:
         index = AI_COUNT_OPTIONS.index(self.ai_count) if self.ai_count in AI_COUNT_OPTIONS else 1
         self.ai_count = AI_COUNT_OPTIONS[(index + direction) % len(AI_COUNT_OPTIONS)]
+        self.enforce_ai_limit_for_map_size()
         self.load_map(self.map_index)
         self.screen_mode = "lobby"
         self.status = f"{self.ai_count_label()}: AI {self.ai_count}명"
+
+    def enforce_ai_limit_for_map_size(self) -> None:
+        if self.map_size_key == "huge" and self.ai_count > HUGE_MAP_AI_LIMIT:
+            self.ai_count = HUGE_MAP_AI_LIMIT
 
     def cycle_pace(self, direction: int = 1) -> None:
         keys = [str(option["key"]) for option in PACE_OPTIONS]
@@ -1447,17 +1466,26 @@ class PixelWars:
                 self.online_server = None
                 return
             self.online_host_hint = local_ip_hint()
-        self.join_online_lobby("127.0.0.1", name="Host")
-        self.online_status = f"온라인 방 생성: {self.online_host_hint}:{DEFAULT_PORT}"
+        self.join_online_lobby("127.0.0.1", name="Host", room_code=self.online_server.room_code)
+        self.online_status = f"온라인 방 생성: 127.0.0.1:{DEFAULT_PORT} 코드 {self.online_server.room_code}"
         self.status = self.online_status
 
-    def join_online_lobby(self, host: str, name: str = "Player") -> None:
+    def parse_online_target(self, text: str) -> tuple[str, str]:
+        cleaned = text.strip() or "127.0.0.1"
+        for separator in ("#", "/"):
+            if separator in cleaned:
+                host, code = cleaned.split(separator, 1)
+                return host.strip() or "127.0.0.1", code.strip() or "LOCAL"
+        return cleaned, "LOCAL"
+
+    def join_online_lobby(self, host: str, name: str = "Player", room_code: str | None = None) -> None:
         if self.online_client:
             self.online_client.close()
         self.online_ready = False
-        self.online_client = OnlineMatchClient(host=host, port=DEFAULT_PORT, name=name)
+        parsed_host, parsed_code = self.parse_online_target(host)
+        self.online_client = OnlineMatchClient(host=parsed_host, port=DEFAULT_PORT, name=name, room_code=room_code or parsed_code)
         if self.online_client.connect():
-            self.online_status = f"온라인 로비 연결: {host}:{DEFAULT_PORT}"
+            self.online_status = f"온라인 로비 연결: {parsed_host}:{DEFAULT_PORT}"
         else:
             self.online_status = self.online_client.state.message
         self.status = self.online_status
@@ -2565,9 +2593,11 @@ class PixelWars:
         total = 0
         for x in range(self.width):
             for y in range(self.height):
-                if not self.land[x][y] or (x, y) in self.fallout:
+                if not self.land[x][y]:
                     continue
                 total += 1
+                if (x, y) in self.fallout:
+                    continue
                 owner = self.owner[x][y]
                 if owner is not None:
                     counts[owner] += 1
@@ -2854,55 +2884,125 @@ class PixelWars:
         map_name = data.get("map")
         matches = [i for i, p in enumerate(self.discover_maps()) if p.name == map_name]
         self.load_map(matches[0] if matches else 0)
-        if len(data["owner"]) != self.width or len(data["owner"][0]) != self.height:
+        owner_grid = data["owner"]
+        if len(owner_grid) != self.width or not all(isinstance(column, list) and len(column) == self.height for column in owner_grid):
             self.status = "불러오기 실패: 맵 크기가 다름"
             return
+        faction_count = len(data["factions"])
         self.choosing_capital = data.get("choosing_capital", False)
-        self.operation_percent = data.get("operation_percent", 0.25)
+        self.operation_percent = max(0.0, min(1.0, float(data.get("operation_percent", 0.25))))
         self.camera_x, self.camera_y, self.scale = data.get("camera", [self.camera_x, self.camera_y, self.scale])
         self.rebuild_map_surface()
-        self.owner = [[None if data["owner"][x][y] < 0 else data["owner"][x][y] for y in range(self.height)] for x in range(self.width)]
+        self.owner = [
+            [
+                owner_grid[x][y] if isinstance(owner_grid[x][y], int) and 0 <= owner_grid[x][y] < faction_count else None
+                for y in range(self.height)
+            ]
+            for x in range(self.width)
+        ]
         faction_data = []
         for f in data["factions"]:
-            f.setdefault("unsupplied_time", 0.0)
-            f.setdefault("unsupplied_start_troops", None)
-            f.setdefault("ballistic_cooldown", 0.0)
-            f.setdefault("nuke_cooldown", 0.0)
-            faction_data.append(f)
+            if not isinstance(f, dict):
+                raise ValueError("invalid faction")
+            faction_data.append(
+                {
+                    "name": str(f.get("name", "Faction"))[:24],
+                    "color": safe_color(f.get("color", (200, 200, 200))),
+                    "money": max(0, int(f.get("money", 0))),
+                    "troops": max(0, int(f.get("troops", 0))),
+                    "fighters": max(0, int(f.get("fighters", 0))),
+                    "bombers": max(0, int(f.get("bombers", 0))),
+                    "ships": max(0, int(f.get("ships", 0))),
+                    "alive": bool(f.get("alive", True)),
+                    "ai_timer": max(0.0, float(f.get("ai_timer", 0.0))),
+                    "personality": str(f.get("personality", "balanced")) if str(f.get("personality", "balanced")) in AI_PERSONALITIES or str(f.get("personality", "")) == "player" else "balanced",
+                    "unsupplied_time": max(0.0, float(f.get("unsupplied_time", 0.0))),
+                    "unsupplied_start_troops": f.get("unsupplied_start_troops"),
+                    "ballistic_cooldown": max(0.0, float(f.get("ballistic_cooldown", 0.0))),
+                    "nuke_cooldown": max(0.0, float(f.get("nuke_cooldown", 0.0))),
+                }
+            )
         self.factions = [Faction(**f) for f in faction_data]
         self.ai_count = max(0, len(self.factions) - 1)
-        self.buildings = [Building(**b) for b in data.get("buildings", [])]
-        self.units = [
-            Unit(
-                **{
-                    **u,
-                    "source": tuple(u["source"]) if u.get("source") else None,
-                    "target_cell": tuple(u["target_cell"]) if u.get("target_cell") else None,
-                    "path": [tuple(p) for p in u.get("path", [])],
-                }
+        self.rebuild_territory_counts()
+        for fid in range(len(self.factions)):
+            self.clamp_faction_troops(fid)
+        self.buildings = [
+            Building(
+                kind=str(b.get("kind")),
+                owner=int(b.get("owner")),
+                x=int(b.get("x")),
+                y=int(b.get("y")),
+                level=max(1, min(5, int(b.get("level", 1)))),
+                timer=max(0.0, float(b.get("timer", 0.0))),
             )
-            for u in data.get("units", [])
+            for b in data.get("buildings", [])
+            if isinstance(b, dict)
+            and str(b.get("kind")) in {"city", "factory", "supply", "airbase", "port", "sam"}
+            and isinstance(b.get("owner"), int)
+            and 0 <= b.get("owner") < len(self.factions)
+            and isinstance(b.get("x"), int)
+            and isinstance(b.get("y"), int)
+            and 0 <= b.get("x") < self.width
+            and 0 <= b.get("y") < self.height
+            and self.land[b.get("x")][b.get("y")]
         ]
-        self.operations = [
-            Operation(
-                **{
-                    **op,
-                    "cells": {tuple(c) for c in op["cells"]} if op.get("cells") is not None else None,
-                    "focus": tuple(op["focus"]) if op.get("focus") else None,
-                    "pixel_cost": op.get("pixel_cost", PIXEL_ATTACK_COST),
-                    "label": op.get("label", "작전"),
-                    "timer": op.get("timer", 0.0),
-                    "age": op.get("age", 0.0),
-                    "supply_grace": op.get("supply_grace", 0.0),
-                    "finished": op.get("finished", False),
-                }
+        self.units = []
+        for u in data.get("units", []):
+            if not isinstance(u, dict) or str(u.get("kind")) not in {"landing", "fighter", "bomber", "ballistic", "nuke", "ship"}:
+                continue
+            owner = int(u.get("owner", -1))
+            if not 0 <= owner < len(self.factions):
+                continue
+            self.units.append(
+                Unit(
+                    kind=str(u.get("kind")),
+                    owner=owner,
+                    x=max(0.0, min(float(self.width - 1), float(u.get("x", 0)))),
+                    y=max(0.0, min(float(self.height - 1), float(u.get("y", 0)))),
+                    tx=max(0.0, min(float(self.width - 1), float(u.get("tx", 0)))),
+                    ty=max(0.0, min(float(self.height - 1), float(u.get("ty", 0)))),
+                    returning=bool(u.get("returning", False)),
+                    payload=max(0, int(u.get("payload", 0))),
+                    speed=max(1.0, min(160.0, float(u.get("speed", 42.0)))),
+                    operation_target=u.get("operation_target") if isinstance(u.get("operation_target"), int) and 0 <= u.get("operation_target") < len(self.factions) else None,
+                )
             )
-            for op in data.get("operations", [])
-        ]
-        self.wars = {frozenset(war) for war in data.get("wars", [])}
-        self.fallout = {(x, y): remaining for x, y, remaining in data.get("fallout", [])}
-        self.fallout_timer = data.get("fallout_timer", 0.0)
-        self.build_cooldowns = {int(owner): remaining for owner, remaining in data.get("build_cooldowns", {}).items()}
+        self.operations = []
+        for op in data.get("operations", []):
+            if not isinstance(op, dict):
+                continue
+            owner = int(op.get("owner", -1))
+            target = op.get("target")
+            if not 0 <= owner < len(self.factions):
+                continue
+            if target is not None and (not isinstance(target, int) or not 0 <= target < len(self.factions)):
+                target = None
+            self.operations.append(
+                Operation(
+                    owner=owner,
+                    target=target,
+                    troops=max(0, min(int(op.get("troops", 0)), self.factions[owner].troops)),
+                    pixel_cost=max(0, min(50, int(op.get("pixel_cost", PIXEL_ATTACK_COST)))),
+                    label=str(op.get("label", "작전"))[:32],
+                    timer=max(0.0, float(op.get("timer", 0.0))),
+                    age=max(0.0, float(op.get("age", 0.0))),
+                    supply_grace=max(0.0, min(TEMP_OPERATION_GRACE, float(op.get("supply_grace", 0.0)))),
+                    finished=bool(op.get("finished", False)),
+                )
+            )
+        self.wars = {frozenset(war) for war in data.get("wars", []) if isinstance(war, list) and all(isinstance(fid, int) and 0 <= fid < len(self.factions) for fid in war)}
+        self.fallout = {
+            (int(x), int(y)): max(0.0, min(FALLOUT_DURATION, float(remaining)))
+            for x, y, remaining in data.get("fallout", [])
+            if isinstance(x, int) and isinstance(y, int) and 0 <= x < self.width and 0 <= y < self.height
+        }
+        self.fallout_timer = max(0.0, float(data.get("fallout_timer", 0.0)))
+        self.build_cooldowns = {
+            int(owner): max(0.0, float(remaining))
+            for owner, remaining in data.get("build_cooldowns", {}).items()
+            if str(owner).isdigit() and 0 <= int(owner) < len(self.factions)
+        }
         self.game_over = data.get("game_over", False)
         self.game_result = data.get("game_result")
         self.victory_timer = data.get("victory_timer", 0.0)

@@ -5,10 +5,14 @@ import socket
 import threading
 import time
 import argparse
+import secrets
 from dataclasses import dataclass, field
 
 
 DEFAULT_PORT = 50505
+MAX_CLIENTS = 8
+MAX_NAME_LEN = 16
+MAX_MESSAGE_LEN = 2048
 
 
 def local_ip_hint() -> str:
@@ -32,10 +36,16 @@ class OnlineState:
     message: str = "오프라인"
 
 
+def safe_player_name(name: str) -> str:
+    cleaned = "".join(ch for ch in name.strip() if ch.isprintable())
+    return (cleaned or "Player")[:MAX_NAME_LEN]
+
+
 class OnlineMatchServer:
-    def __init__(self, host: str = "0.0.0.0", port: int = DEFAULT_PORT) -> None:
+    def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT, room_code: str | None = None) -> None:
         self.host = host
         self.port = port
+        self.room_code = (room_code or secrets.token_hex(3)).strip()[:32]
         self.players: dict[socket.socket, str] = {}
         self.ready: dict[socket.socket, bool] = {}
         self.lock = threading.Lock()
@@ -96,6 +106,10 @@ class OnlineMatchServer:
                     client, _ = self.server_socket.accept()
                 except socket.timeout:
                     continue
+                with self.lock:
+                    if len(self.players) >= MAX_CLIENTS:
+                        client.close()
+                        continue
                 client.settimeout(0.5)
                 threading.Thread(target=self._handle_client, args=(client,), daemon=True).start()
         except OSError:
@@ -113,13 +127,20 @@ class OnlineMatchServer:
                 if not chunk:
                     break
                 buffer += chunk.decode("utf-8", errors="ignore")
+                if len(buffer) > MAX_MESSAGE_LEN:
+                    break
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     if not line.strip():
                         continue
+                    if len(line) > MAX_MESSAGE_LEN:
+                        break
                     data = json.loads(line)
                     if data.get("type") == "hello":
-                        name = self._unique_name(str(data.get("name") or "Player"))
+                        if str(data.get("room") or "") != self.room_code:
+                            self._send(client, {"type": "error", "message": "bad room code"})
+                            break
+                        name = self._unique_name(safe_player_name(str(data.get("name") or "Player")))
                         with self.lock:
                             self.players[client] = name
                             self.ready[client] = False
@@ -158,7 +179,7 @@ class OnlineMatchServer:
             clients = list(self.players)
             players = list(self.players.values())
             ready_players = [self.players[client] for client in clients if self.ready.get(client)]
-        payload = {"type": "state", "room": "LOCAL", "players": players, "ready": ready_players}
+        payload = {"type": "state", "room": self.room_code, "players": players, "ready": ready_players}
         for client in clients:
             self._send(client, payload)
 
@@ -170,10 +191,11 @@ class OnlineMatchServer:
 
 
 class OnlineMatchClient:
-    def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT, name: str = "Player") -> None:
+    def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT, name: str = "Player", room_code: str = "LOCAL") -> None:
         self.host = host
         self.port = port
-        self.name = name
+        self.name = safe_player_name(name)
+        self.room_code = room_code[:32]
         self.state = OnlineState()
         self.running = False
         self.socket: socket.socket | None = None
@@ -189,7 +211,7 @@ class OnlineMatchClient:
             self.state.message = f"{self.host}:{self.port} 연결됨"
             self.thread = threading.Thread(target=self._listen, daemon=True)
             self.thread.start()
-            self.send({"type": "hello", "name": self.name})
+            self.send({"type": "hello", "name": self.name, "room": self.room_code})
             return True
         except OSError as exc:
             self.state = OnlineState(message=f"연결 실패: {exc}")
@@ -231,10 +253,14 @@ class OnlineMatchClient:
             if not chunk:
                 break
             buffer += chunk.decode("utf-8", errors="ignore")
+            if len(buffer) > MAX_MESSAGE_LEN:
+                break
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 if not line.strip():
                     continue
+                if len(line) > MAX_MESSAGE_LEN:
+                    break
                 try:
                     data = json.loads(line)
                 except json.JSONDecodeError:
@@ -253,14 +279,16 @@ class OnlineMatchClient:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="PixelWars LAN lobby server")
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--room-code", default=None)
     args = parser.parse_args()
-    server = OnlineMatchServer(host=args.host, port=args.port)
+    server = OnlineMatchServer(host=args.host, port=args.port, room_code=args.room_code)
     if not server.start():
         print(f"서버 시작 실패: {server.error}")
         return
-    print(f"PixelWars LAN 로비 서버 실행 중: {local_ip_hint()}:{args.port}")
+    print(f"PixelWars 로비 서버 실행 중: {args.host}:{args.port}")
+    print(f"방 코드: {server.room_code}")
     print("종료하려면 Ctrl+C")
     try:
         while True:
