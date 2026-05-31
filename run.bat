@@ -2,20 +2,22 @@
 setlocal
 set PYTHONDONTWRITEBYTECODE=1
 
-py main.py
-if not errorlevel 1 goto END
+where py >NUL 2>&1
+if not errorlevel 1 (
+    py main.py
+    goto end
+)
 
-python main.py
-if not errorlevel 1 goto END
+where python >NUL 2>&1
+if not errorlevel 1 (
+    python main.py
+    goto end
+)
 
+echo Python was not found or is not registered in PATH.
+echo Please install Python, then run this file again.
 echo.
-echo Python is not installed or not added to PATH.
-echo Please install Python and try again.
 echo Download: https://www.python.org/downloads/
-echo.
-pause
-exit /b 1
 
-:END
+:end
 pause
-exit /b 0
