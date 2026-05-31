@@ -24,7 +24,8 @@ MAP_DIR = BUNDLE_ROOT / "maps"
 SAVE_DIR = USER_ROOT / "saves"
 TERRITORY_IMAGE_DIR = USER_ROOT / "territory_images"
 BUNDLED_TERRITORY_IMAGE_DIR = BUNDLE_ROOT / "territory_images"
-GAME_VERSION = "v1.0.4-alpha"
+GENERATED_MAP_DIR = USER_ROOT / "maps"
+GAME_VERSION = "v1.0.5-alpha"
 SCREEN_W = 1280
 SCREEN_H = 820
 PANEL_W = 300
@@ -536,10 +537,41 @@ class PixelWars:
         self.load_map(random.randrange(len(self.map_files)))
 
     def discover_maps(self) -> list[Path]:
-        maps = sorted(MAP_DIR.glob("*.png"))
+        map_dirs = [MAP_DIR]
+        if GENERATED_MAP_DIR != MAP_DIR:
+            map_dirs.append(GENERATED_MAP_DIR)
+        maps: list[Path] = []
+        seen: set[str] = set()
+        for map_dir in map_dirs:
+            if not map_dir.exists():
+                continue
+            for path in sorted(map_dir.glob("*.png")):
+                if path.name not in seen:
+                    maps.append(path)
+                    seen.add(path.name)
         if not maps:
-            raise FileNotFoundError(f"No PNG maps found in {MAP_DIR}")
+            maps = [self.create_fallback_map()]
         return maps
+
+    def create_fallback_map(self) -> Path:
+        GENERATED_MAP_DIR.mkdir(parents=True, exist_ok=True)
+        path = GENERATED_MAP_DIR / "fallback_world.png"
+        if path.exists():
+            return path
+        surface = pygame.Surface((420, 260), pygame.SRCALPHA)
+        surface.fill((135, 206, 235, 255))
+        land_color = (255, 255, 255, 255)
+        for rect in [
+            pygame.Rect(34, 54, 128, 74),
+            pygame.Rect(78, 126, 96, 88),
+            pygame.Rect(198, 46, 148, 92),
+            pygame.Rect(244, 136, 110, 68),
+        ]:
+            pygame.draw.ellipse(surface, land_color, rect)
+        pygame.draw.circle(surface, land_color, (370, 190), 24)
+        pygame.image.save(surface, path)
+        self.status = "맵 폴더가 비어 있어 기본 fallback 맵을 생성했습니다"
+        return path
 
     def prepare_map_surface(self, source: pygame.Surface) -> pygame.Surface:
         width, height = source.get_size()
@@ -1225,11 +1257,18 @@ class PixelWars:
         self.update_autosave(sim_dt)
 
     def update_matching(self, dt: float) -> None:
+        if self.online_lobby_active() and not self.online_ready_to_start():
+            ready = len(self.online_ready_players())
+            total = len(self.online_players())
+            self.match_timer = 0.0
+            self.match_found = max(0, total - 1)
+            self.status = f"온라인 매칭 대기: READY {ready}/{total}"
+            return
         self.match_timer += dt
         progress = min(1.0, self.match_timer / self.match_duration)
         online_count = max(0, len(self.online_players()) - 1)
         self.match_found = min(self.ai_count, max(online_count, int(progress * self.ai_count)))
-        if self.online_players():
+        if self.online_lobby_active():
             self.status = f"온라인 매칭 중: 준비 {len(self.online_ready_players())}/{len(self.online_players())}, AI {self.match_found}/{self.ai_count}"
         else:
             self.status = f"매칭 중: AI {self.match_found}/{self.ai_count}"
@@ -1237,12 +1276,17 @@ class PixelWars:
             self.start_matched_game()
 
     def start_matchmaking(self) -> None:
+        if self.online_lobby_active() and not self.online_ready_to_start():
+            ready = len(self.online_ready_players())
+            total = len(self.online_players())
+            self.status = f"매칭 시작 불가: 모든 온라인 참가자가 READY여야 합니다 ({ready}/{total})"
+            return
         self.screen_mode = "matching"
         self.match_timer = 0.0
         self.match_found = max(0, len(self.online_players()) - 1)
         self.menu = None
         self.show_help = False
-        if self.online_players():
+        if self.online_lobby_active():
             ready = len(self.online_ready_players())
             total = len(self.online_players())
             self.status = f"온라인 로비 매칭 시작: 준비 {ready}/{total}"
@@ -1254,7 +1298,10 @@ class PixelWars:
         self.match_found = self.ai_count
         self.choosing_capital = True
         self.show_help = True
-        self.status = f"매칭 완료: {self.ai_count + 1}명 입장, 수도를 선택하세요"
+        if self.online_lobby_active():
+            self.status = "온라인 로비 매칭 완료: 전투는 아직 로컬 시뮬레이션입니다"
+        else:
+            self.status = f"매칭 완료: {self.ai_count + 1}명 입장, 수도를 선택하세요"
 
     def return_to_lobby(self) -> None:
         self.screen_mode = "lobby"
@@ -1457,6 +1504,16 @@ class PixelWars:
         if self.online_client:
             return self.online_client.state.ready_players
         return []
+
+    def online_lobby_active(self) -> bool:
+        return bool(self.online_client and self.online_client.state.connected)
+
+    def online_ready_to_start(self) -> bool:
+        players = self.online_players()
+        if not players:
+            return False
+        ready = set(self.online_ready_players())
+        return bool(players) and all(name in ready for name in players)
 
     def update_build_cooldowns(self, dt: float) -> None:
         expired = []
@@ -2774,7 +2831,19 @@ class PixelWars:
             return "세이브 정보를 읽을 수 없음"
 
     def load_game(self, path: Path) -> None:
+        try:
+            self._load_game(path)
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError, IndexError) as exc:
+            self.status = f"불러오기 실패: 깨진 세이브 또는 호환되지 않는 파일 ({path.name})"
+            self.add_world_log(f"세이브 로드 실패: {path.name}")
+            print(f"Save load failed: {path} ({exc})")
+
+    def _load_game(self, path: Path) -> None:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data.get("owner"), list) or not data.get("owner"):
+            raise ValueError("owner grid missing")
+        if not isinstance(data.get("factions"), list) or not data.get("factions"):
+            raise ValueError("factions missing")
         self.map_size_key = data.get("map_size_key", self.map_size_key)
         self.ai_count = data.get("ai_count", self.ai_count)
         if self.ai_count not in AI_COUNT_OPTIONS:
@@ -2934,6 +3003,7 @@ class PixelWars:
             f"전쟁 규모: {self.ai_count_label()} (AI {self.ai_count}명)",
             f"전략 템포: {self.pace_label()} - {self.pace_description()}",
             f"온라인: {self.online_status}",
+            f"온라인 READY: {len(self.online_ready_players())}/{len(self.online_players())}" if self.online_lobby_active() else "온라인 전투: 로비/매칭만 지원, 전투 동기화 예정",
             f"승리 조건: 오염 제외 95% 점령 + 적 5픽셀 이하 2분 유지",
         ]
         y = info_rect.y + 34
@@ -3016,6 +3086,10 @@ class PixelWars:
         pygame.draw.rect(self.screen, (76, 138, 255), fill, border_radius=8)
         found = self.font.render(f"Player 1/1  ·  AI {self.match_found}/{self.ai_count}  ·  {self.pace_label()} 템포", True, (226, 233, 245))
         self.screen.blit(found, found.get_rect(center=(rect.centerx, rect.y + 158)))
+        if self.online_lobby_active():
+            ready_text = f"READY {len(self.online_ready_players())}/{len(self.online_players())} · 전투 동기화는 다음 단계"
+            ready_label = self.small.render(ready_text, True, (255, 225, 155))
+            self.screen.blit(ready_label, ready_label.get_rect(center=(rect.centerx, rect.y + 184)))
         hint = self.small.render("ESC: 매칭 취소", True, (255, 225, 155))
         self.screen.blit(hint, hint.get_rect(center=(rect.centerx, rect.y + 202)))
 

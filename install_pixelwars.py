@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import os
 import re
 import shutil
@@ -88,10 +89,12 @@ def create_shortcut(shortcut: Path) -> None:
     )
 
 
-def create_shortcuts() -> None:
+def create_shortcuts(enable_startup: bool = False) -> None:
     user_profile = Path(os.environ.get("USERPROFILE", str(Path.home())))
     appdata = Path(os.environ.get("APPDATA", user_profile / "AppData" / "Roaming"))
     create_shortcut(user_profile / "Desktop" / "PixelWars.lnk")
+    if not enable_startup:
+        return
     startup = appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
     startup.mkdir(parents=True, exist_ok=True)
     create_shortcut(startup / "PixelWars.lnk")
@@ -151,6 +154,11 @@ def reinstall(latest_version: str, download_url: str) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="PixelWars installer/updater")
+    parser.add_argument("--startup", action="store_true", help="Register PixelWars in Windows startup.")
+    parser.add_argument("--no-launch", action="store_true", help="Do not start PixelWars after install/update.")
+    args = parser.parse_args()
+
     print("PixelWars installer/updater")
     print(f"Install path: {INSTALL_DIR}")
     try:
@@ -163,10 +171,15 @@ def main() -> int:
             reinstall(latest_version, download_url)
         else:
             print("PixelWars is already up to date.")
-        create_shortcuts()
-        print("Startup shortcut enabled.")
-        print("Starting PixelWars...")
-        subprocess.Popen([str(TARGET_EXE)], cwd=str(INSTALL_DIR))
+        create_shortcuts(enable_startup=args.startup)
+        print("Desktop shortcut enabled.")
+        if args.startup:
+            print("Startup shortcut enabled.")
+        else:
+            print("Startup shortcut skipped. Run with --startup to enable it.")
+        if not args.no_launch:
+            print("Starting PixelWars...")
+            subprocess.Popen([str(TARGET_EXE)], cwd=str(INSTALL_DIR))
     except Exception as exc:
         print(f"Install/update failed: {exc}")
         input("Press Enter to exit...")
