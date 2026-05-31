@@ -24,7 +24,7 @@ MAP_DIR = BUNDLE_ROOT / "maps"
 SAVE_DIR = USER_ROOT / "saves"
 TERRITORY_IMAGE_DIR = USER_ROOT / "territory_images"
 BUNDLED_TERRITORY_IMAGE_DIR = BUNDLE_ROOT / "territory_images"
-GAME_VERSION = "v1.0.1-alpha"
+GAME_VERSION = "v1.0.2-alpha"
 SCREEN_W = 1280
 SCREEN_H = 820
 PANEL_W = 300
@@ -166,7 +166,7 @@ AI_PERSONALITIES = {
         "operation_troops": 180,
         "max_operations": 2,
         "air_chance": 0.004,
-        "ballistic_chance": 0.00035,
+        "ballistic_chance": 0.00018,
         "build_chance": 0.014,
         "build_choices": ["city", "sam", "airbase", "factory", "supply"],
     },
@@ -176,7 +176,7 @@ AI_PERSONALITIES = {
         "operation_troops": 280,
         "max_operations": 3,
         "air_chance": 0.008,
-        "ballistic_chance": 0.0007,
+        "ballistic_chance": 0.00035,
         "build_chance": 0.010,
         "build_choices": ["airbase", "factory", "city", "supply"],
     },
@@ -206,7 +206,7 @@ AI_PERSONALITIES = {
         "operation_troops": 170,
         "max_operations": 3,
         "air_chance": 0.012,
-        "ballistic_chance": 0.0009,
+        "ballistic_chance": 0.00045,
         "build_chance": 0.011,
         "build_choices": ["airbase", "factory", "sam", "supply"],
     },
@@ -216,7 +216,7 @@ AI_PERSONALITIES = {
         "operation_troops": 430,
         "max_operations": 4,
         "air_chance": 0.018,
-        "ballistic_chance": 0.0012,
+        "ballistic_chance": 0.00055,
         "build_chance": 0.008,
         "build_choices": ["airbase", "factory", "supply"],
     },
@@ -3059,7 +3059,15 @@ class PixelWars:
                     continue
                 pygame.draw.circle(self.screen, link_color, (sx, sy), radius, 1)
         elif self.show_support_zones == "outline":
-            current_hash = hash((sum(1 for b in self.buildings if b.owner == PLAYER_ID and b.kind == "factory"), sum(1 for b in self.buildings if b.owner == PLAYER_ID and b.kind == "supply")))
+            current_hash = hash(
+                tuple(
+                    sorted(
+                        (b.kind, b.x, b.y)
+                        for b in self.buildings
+                        if b.owner == PLAYER_ID and b.kind in {"factory", "supply"}
+                    )
+                )
+            )
             if current_hash != self.last_supply_buildings_hash:
                 self.last_supply_buildings_hash = current_hash
                 supply_cells = set()

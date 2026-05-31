@@ -11,7 +11,7 @@ py main.py
 ```
 
 Windows에서는 `run.bat`를 실행해도 됩니다.
-현재 게임 버전은 `v1.0.1-alpha`입니다.
+현재 게임 버전은 `v1.0.2-alpha`입니다.
 저장 파일은 소스 실행에서는 `saves/*.pxw`, EXE 실행에서는 `%LOCALAPPDATA%\PixelWars\saves\*.pxw`로 생성됩니다. `.pxw`는 PixelWars 저장 파일 형식입니다.
 세이브에는 맵, 영토, 돈, 병력, 세력 성향, 건물, 유닛, 작전, 전쟁 상태, 핵 낙진 지역이 저장됩니다.
 
