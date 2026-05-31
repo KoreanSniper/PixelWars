@@ -24,7 +24,7 @@ MAP_DIR = BUNDLE_ROOT / "maps"
 SAVE_DIR = USER_ROOT / "saves"
 TERRITORY_IMAGE_DIR = USER_ROOT / "territory_images"
 BUNDLED_TERRITORY_IMAGE_DIR = BUNDLE_ROOT / "territory_images"
-GAME_VERSION = "v1.0.2-alpha"
+GAME_VERSION = "v1.0.3-alpha"
 SCREEN_W = 1280
 SCREEN_H = 820
 PANEL_W = 300
@@ -65,6 +65,7 @@ AUTOSAVE_KEEP = 5
 VICTORY_CONTROL_RATIO = 0.95
 VICTORY_HOLD_TIME = 120.0
 ENEMY_SURVIVOR_PIXEL_LIMIT = 5
+GAME_END_CHECK_INTERVAL = 1.0
 PLAYER_ID = 0
 DEFAULT_AI_COUNT = 20
 AI_COUNT_OPTIONS = [20, 40, 60, 80, 100]
@@ -387,6 +388,7 @@ class PixelWars:
         self.game_over = False
         self.game_result: str | None = None
         self.victory_timer = 0.0
+        self.game_end_check_timer = 0.0
         self.paused = False
         self.sim_speed = 1.0
         self.screen_mode = "lobby"
@@ -472,6 +474,7 @@ class PixelWars:
         self.game_over = False
         self.game_result = None
         self.victory_timer = 0.0
+        self.game_end_check_timer = 0.0
         self.paused = False
         self.sim_speed = 1.0
         self.ai_decision_timer = 0.0
@@ -1920,13 +1923,22 @@ class PixelWars:
             ]
             if priority and random.random() < 0.42:
                 return random.choice(priority)
-        cells = [
-            (x, y)
-            for x in range(self.width)
-            for y in range(self.height)
-            if self.land[x][y] and self.owner[x][y] == target
-        ]
-        return random.choice(cells) if cells else None
+        attempts = min(700, max(80, self.width * self.height // 28))
+        for _ in range(attempts):
+            x = random.randrange(self.width)
+            y = random.randrange(self.height)
+            if self.land[x][y] and self.owner[x][y] == target:
+                return x, y
+
+        chosen: tuple[int, int] | None = None
+        seen = 0
+        for x in range(self.width):
+            for y in range(self.height):
+                if self.land[x][y] and self.owner[x][y] == target:
+                    seen += 1
+                    if random.randrange(seen) == 0:
+                        chosen = (x, y)
+        return chosen
 
     def ai_build(self, fid: int) -> None:
         if self.build_cooldowns.get(fid, 0.0) > 0:
@@ -2508,6 +2520,11 @@ class PixelWars:
         if self.territory_counts[PLAYER_ID] <= 0:
             self.finish_game("defeat")
             return
+        self.game_end_check_timer += dt
+        if self.game_end_check_timer < GAME_END_CHECK_INTERVAL:
+            return
+        elapsed = self.game_end_check_timer
+        self.game_end_check_timer = 0.0
         capturable_total, capturable_counts = self.capturable_territory_counts()
         if capturable_total <= 0:
             self.victory_timer = 0.0
@@ -2515,7 +2532,7 @@ class PixelWars:
         player_ratio = capturable_counts[PLAYER_ID] / capturable_total
         enemies_crushed = all(capturable_counts[fid] <= ENEMY_SURVIVOR_PIXEL_LIMIT for fid in range(1, len(self.factions)))
         if player_ratio >= VICTORY_CONTROL_RATIO and enemies_crushed:
-            self.victory_timer += dt
+            self.victory_timer += elapsed
             remaining = max(0, VICTORY_HOLD_TIME - self.victory_timer)
             if remaining > 0:
                 self.status = f"승리 조건 유지 중: {remaining:.0f}초"
