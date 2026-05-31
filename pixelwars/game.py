@@ -46,6 +46,7 @@ ENEMY_DENSITY_COST_RATIO = 0.42
 MAX_ATTACK_COST = 120
 TROOPS_PER_PIXEL_CAP = 120
 TEMP_OPERATION_GRACE = 60.0
+TEMP_SUPPLY_RADIUS = 12
 SUPPLY_COLLAPSE_TIME = 180.0
 SUPPLY_COLLAPSE_FLOOR = 0.25
 SUPPLY_FACTORY_RANGE = 8
@@ -1873,12 +1874,25 @@ class PixelWars:
         current = self.owner[x][y]
         if current == fid:
             return False
-        temporary_supply = operation is not None and operation.age < operation.supply_grace
+        temporary_supply = self.operation_temporary_supply_covers(operation, x, y)
         if not temporary_supply and not self.in_supply_range(fid, x, y):
             return False
         if target is None:
             return current is None
         return current == target
+
+    def operation_temporary_supply_covers(self, operation: Operation | None, x: int, y: int) -> bool:
+        if operation is None or operation.age >= operation.supply_grace:
+            return False
+        anchors: list[tuple[int, int]] = []
+        if operation.focus is not None:
+            anchors.append(operation.focus)
+        elif operation.cells:
+            anchors.extend(operation.cells)
+        if not anchors:
+            return True
+        radius_sq = TEMP_SUPPLY_RADIUS * TEMP_SUPPLY_RADIUS
+        return any((x - ax) * (x - ax) + (y - ay) * (y - ay) <= radius_sq for ax, ay in anchors)
 
     def resolve_pixel_attack(self, fid: int, x: int, y: int, power: int) -> bool:
         defender = self.owner[x][y]
@@ -2307,7 +2321,7 @@ class PixelWars:
             self.status = "공중공격 실패: 공군기지가 필요함"
             return
         if kind == "fighter" and faction.fighters <= 0:
-            self.status = "전투기가 없음. F 키로 구매 가능"
+            self.status = "전투기가 없음. Shift+F 키로 구매 가능"
             return
         if kind == "bomber" and faction.bombers <= 0:
             self.status = "폭격기가 없음. B 키로 구매 가능"
