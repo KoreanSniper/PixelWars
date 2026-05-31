@@ -536,7 +536,7 @@ class PixelWars:
         return AI_COUNT_LABELS.get(self.ai_count, f"AI {self.ai_count}")
 
     def building_visible_at_current_zoom(self) -> bool:
-        return self.show_buildings and self.scale / max(0.001, self.base_scale) < BUILDING_HIDE_ZOOM
+        return self.show_buildings and self.scale / max(0.001, self.base_scale) > BUILDING_HIDE_ZOOM
 
     def add_world_log(self, message: str) -> None:
         self.world_log.insert(0, message)
@@ -2674,7 +2674,7 @@ class PixelWars:
             "H/F1/?: 도움말",
             "Tab: 사이드바 접기/펼치기",
             "F5/F9: .pxw 저장/불러오기 선택",
-            "C: AI성향  V: 보급  E: 작전",
+            "C: AI성향(수도 전 자동배치)  V: 보급  E: 작전",
             "G: 건물 표시   T: 영토 이미지",
             "WASD: 이동   휠: 확대/축소",
             "ESC: 일시정지   L: 로비   -/=: 속도",
@@ -3830,7 +3830,7 @@ class PixelWars:
                     "보급로: 공장/활성 보급로와 연결 거리 안에 있으면 주변 36칸 진격을 허용합니다.",
                     "V키를 누르면 보급 연결선과 보급 범위를 지도에 표시합니다.",
                     "평원은 일반 지형이고, 산맥/사막은 진격 속도가 20% 느립니다.",
-                    "확대 3x 이상에서는 건물 아이콘이 자동으로 숨겨집니다.",
+                    "확대 3x 이하에서는 건물 아이콘이 숨겨지고, 3x 초과에서 표시됩니다.",
                     "건물 건설과 도시 레벨업에는 5초 쿨타임이 있습니다.",
                     "일시정지 설정에서 영토 이미지를 업로드하고 타일/늘림/잘라 채우기를 고를 수 있습니다.",
                     "항구: 해변에만 건설 가능하며 돈을 벌고 전투함 구매 조건이 됩니다.",
