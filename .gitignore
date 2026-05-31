@@ -9,5 +9,9 @@ env/
 saves/
 *.log
 
+build/
+dist/
+*.spec
+
 .DS_Store
 Thumbs.db
