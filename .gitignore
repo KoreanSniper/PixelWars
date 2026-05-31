@@ -11,6 +11,8 @@ saves/
 
 build/
 dist/
+build-*/
+release-*/
 *.spec
 
 .DS_Store

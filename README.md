@@ -11,8 +11,21 @@ py main.py
 ```
 
 Windows에서는 `run.bat`를 실행해도 됩니다.
-저장 파일은 `saves/*.pxw`로 생성됩니다. `.pxw`는 PixelWars 저장 파일 형식입니다.
+현재 게임 버전은 `v1.0.1-alpha`입니다.
+저장 파일은 소스 실행에서는 `saves/*.pxw`, EXE 실행에서는 `%LOCALAPPDATA%\PixelWars\saves\*.pxw`로 생성됩니다. `.pxw`는 PixelWars 저장 파일 형식입니다.
 세이브에는 맵, 영토, 돈, 병력, 세력 성향, 건물, 유닛, 작전, 전쟁 상태, 핵 낙진 지역이 저장됩니다.
+
+## 설치 파일
+
+GitHub Release의 `PixelWars.exe`는 바로 실행 가능한 게임 파일입니다.
+`PixelWarsInstaller.exe`는 최신 릴리즈를 확인하는 설치/업데이트 파일입니다.
+
+- 설치 위치: `%LOCALAPPDATA%\PixelWars`
+- 설치 버전 기록: `%LOCALAPPDATA%\PixelWars\version.txt`
+- 현재 설치가 없거나 최신 버전보다 낮으면 기존 설치 폴더를 삭제하고 다시 설치합니다.
+- 설치 후 바탕화면 바로가기를 만들고 시작프로그램에 `PixelWars.lnk`를 등록합니다.
+- 재설치 전 실행 중인 `PixelWars.exe`를 종료합니다.
+- 설치가 끝나면 게임을 자동 실행합니다.
 
 ## 로비와 매칭
 

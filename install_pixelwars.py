@@ -96,7 +96,17 @@ def create_shortcuts() -> None:
     create_shortcut(startup / "PixelWars.lnk")
 
 
+def stop_running_game() -> None:
+    subprocess.run(
+        ["taskkill", "/f", "/im", "PixelWars.exe", "/t"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def reinstall(latest_version: str, download_url: str) -> None:
+    stop_running_game()
     if INSTALL_DIR.exists():
         shutil.rmtree(INSTALL_DIR)
     INSTALL_DIR.mkdir(parents=True, exist_ok=True)

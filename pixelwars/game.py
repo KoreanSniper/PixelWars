@@ -3,8 +3,10 @@ from __future__ import annotations
 import colorsys
 import json
 import math
+import os
 import random
 import shutil
+import sys
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -16,9 +18,13 @@ from .online import DEFAULT_PORT, OnlineMatchClient, OnlineMatchServer, local_ip
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAP_DIR = ROOT / "maps"
-SAVE_DIR = ROOT / "saves"
-TERRITORY_IMAGE_DIR = ROOT / "territory_images"
+BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))
+USER_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "PixelWars" if getattr(sys, "frozen", False) else ROOT
+MAP_DIR = BUNDLE_ROOT / "maps"
+SAVE_DIR = USER_ROOT / "saves"
+TERRITORY_IMAGE_DIR = USER_ROOT / "territory_images"
+BUNDLED_TERRITORY_IMAGE_DIR = BUNDLE_ROOT / "territory_images"
+GAME_VERSION = "v1.0.1-alpha"
 SCREEN_W = 1280
 SCREEN_H = 820
 PANEL_W = 300
@@ -481,18 +487,27 @@ class PixelWars:
     def load_territory_images(self) -> None:
         self.territory_images = {}
         TERRITORY_IMAGE_DIR.mkdir(exist_ok=True)
-        self.territory_image_files = sorted(
-            [path for path in TERRITORY_IMAGE_DIR.iterdir() if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}]
-        )
-        if self.territory_image_file and not (TERRITORY_IMAGE_DIR / self.territory_image_file).exists():
+        image_dirs = [TERRITORY_IMAGE_DIR]
+        if BUNDLED_TERRITORY_IMAGE_DIR != TERRITORY_IMAGE_DIR and BUNDLED_TERRITORY_IMAGE_DIR.exists():
+            image_dirs.append(BUNDLED_TERRITORY_IMAGE_DIR)
+        by_name: dict[str, Path] = {}
+        for image_dir in reversed(image_dirs):
+            if image_dir.exists():
+                for path in image_dir.iterdir():
+                    if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}:
+                        by_name[path.name] = path
+        self.territory_image_files = sorted(by_name.values(), key=lambda path: path.name.lower())
+        selected_path = by_name.get(self.territory_image_file or "")
+        if self.territory_image_file and selected_path is None:
             self.territory_image_file = None
         if self.territory_image_file is None:
-            preferred = [TERRITORY_IMAGE_DIR / name for name in ("player.png", "0.png", "faction_0.png")]
-            selected = next((path for path in preferred if path.exists()), self.territory_image_files[0] if self.territory_image_files else None)
-            self.territory_image_file = selected.name if selected else None
-        if self.territory_image_file:
+            selected_path = next((by_name[name] for name in ("player.png", "0.png", "faction_0.png") if name in by_name), self.territory_image_files[0] if self.territory_image_files else None)
+            self.territory_image_file = selected_path.name if selected_path else None
+        else:
+            selected_path = by_name.get(self.territory_image_file)
+        if selected_path:
             try:
-                self.territory_images[PLAYER_ID] = pygame.image.load(str(TERRITORY_IMAGE_DIR / self.territory_image_file)).convert_alpha()
+                self.territory_images[PLAYER_ID] = pygame.image.load(str(selected_path)).convert_alpha()
             except pygame.error:
                 self.territory_image_file = None
 
@@ -2532,7 +2547,39 @@ class PixelWars:
 
     def slider_rect(self) -> pygame.Rect:
         panel = self.panel_rect()
-        return pygame.Rect(panel.x + 28, 306 - self.panel_scroll, panel.w - 56, 18)
+        return pygame.Rect(panel.x + 28, self.panel_controls_y() - self.panel_scroll, panel.w - 56, 18)
+
+    def panel_controls_y(self) -> int:
+        return 64 + len(self.panel_lines()) * 24 + 8
+
+    def panel_lines(self) -> list[str]:
+        player = self.factions[PLAYER_ID]
+        return [
+            f"버전: {GAME_VERSION}",
+            f"맵: {self.map_files[self.map_index].name} (1/2 이동, R 랜덤)",
+            f"돈: {player.money}   병력: {player.troops}/{self.troop_capacity(PLAYER_ID)}",
+            f"전투기: {player.fighters}  폭격기: {player.bombers}",
+            f"전투함: {player.ships}",
+            f"건설 쿨타임: {self.build_cooldowns.get(PLAYER_ID, 0.0):.1f}초",
+            f"미사일 쿨: {player.ballistic_cooldown:.0f}s / 핵 {player.nuke_cooldown:.0f}s",
+            f"승리 유지: {min(VICTORY_HOLD_TIME, self.victory_timer):.0f}/{VICTORY_HOLD_TIME:.0f}초",
+            f"게임 속도: {'온라인 고정' if self.multiplayer_speed_locked() else f'{self.sim_speed:g}x'}",
+            f"확대: {self.scale / self.base_scale:.1f}x",
+            f"표시: 건물 {'ON' if self.building_visible_at_current_zoom() else 'OFF'} / 영토이미지 {'ON' if self.territory_images_enabled else 'OFF'}",
+            "",
+            "H/F1/?: 도움말",
+            "Tab: 사이드바 접기/펼치기",
+            "F5/F9: .pxw 저장/불러오기 선택",
+            "C: AI성향  V: 보급  E: 작전",
+            "G: 건물 표시   T: 영토 이미지",
+            "WASD: 이동   휠: 확대/축소",
+            "ESC: 일시정지   L: 로비   -/=: 속도",
+            "좌클릭: 수도 선택/작전 생성",
+            "우클릭: 작전/건설 메뉴",
+            "F/B/N: 전투기/폭격기/전투함 구매",
+            "",
+            "좌클릭 작전 투입 병력",
+        ]
 
     def scroll_panel(self, wheel_y: int) -> None:
         max_scroll = max(0, self.panel_content_height - SCREEN_H + 72)
@@ -3324,31 +3371,7 @@ class PixelWars:
         player = self.factions[PLAYER_ID]
         title = self.big.render("PixelWars", True, (244, 247, 255))
         self.screen.blit(title, (x, 18 + offset))
-        lines = [
-            f"맵: {self.map_files[self.map_index].name} (1/2 이동, R 랜덤)",
-            f"돈: {player.money}   병력: {player.troops}/{self.troop_capacity(PLAYER_ID)}",
-            f"전투기: {player.fighters}  폭격기: {player.bombers}",
-            f"전투함: {player.ships}",
-            f"건설 쿨타임: {self.build_cooldowns.get(PLAYER_ID, 0.0):.1f}초",
-            f"미사일 쿨: {player.ballistic_cooldown:.0f}s / 핵 {player.nuke_cooldown:.0f}s",
-            f"승리 유지: {min(VICTORY_HOLD_TIME, self.victory_timer):.0f}/{VICTORY_HOLD_TIME:.0f}초",
-            f"게임 속도: {'온라인 고정' if self.multiplayer_speed_locked() else f'{self.sim_speed:g}x'}",
-            f"확대: {self.scale / self.base_scale:.1f}x",
-            f"표시: 건물 {'ON' if self.building_visible_at_current_zoom() else 'OFF'} / 영토이미지 {'ON' if self.territory_images_enabled else 'OFF'}",
-            "",
-            "H/F1/?: 도움말",
-            "Tab: 사이드바 접기/펼치기",
-            "F5/F9: .pxw 저장/불러오기 선택",
-            "C: AI성향  V: 보급  E: 작전",
-            "G: 건물 표시   T: 영토 이미지",
-            "WASD: 이동   휠: 확대/축소",
-            "ESC: 일시정지   L: 로비   -/=: 속도",
-            "좌클릭: 수도 선택/작전 생성",
-            "우클릭: 작전/건설 메뉴",
-            "F/B/N: 전투기/폭격기/전투함 구매",
-            "",
-            "좌클릭 작전 투입 병력",
-        ]
+        lines = self.panel_lines()
         y = 64 + offset
         for line in lines:
             text = self.font.render(line, True, (218, 225, 238))
@@ -3363,7 +3386,7 @@ class PixelWars:
         pygame.draw.circle(self.screen, (113, 189, 255), (knob_x, rect.centery), 10)
         value = self.font.render(f"{self.operation_percent_text()} ({selected_troops}/{max_troops})", True, (244, 247, 255))
         self.screen.blit(value, (rect.right + 8, rect.y - 4))
-        after_minimap = self.draw_minimap(x, 432 + offset)
+        after_minimap = self.draw_minimap(x, rect.bottom + 30)
         after_stats = self.draw_player_stats(x, after_minimap + 24)
         after_cursor = after_stats
         if self.show_operation_info:
