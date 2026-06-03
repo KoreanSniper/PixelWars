@@ -180,6 +180,7 @@ AI_PERSONALITIES = {
         "operation_troops": 180,
         "max_operations": 2,
         "air_chance": 0.004,
+        "landing_chance": 0.0018,
         "ballistic_chance": 0.00018,
         "build_chance": 0.014,
         "build_choices": ["city", "sam", "airbase", "factory", "supply"],
@@ -190,6 +191,7 @@ AI_PERSONALITIES = {
         "operation_troops": 280,
         "max_operations": 3,
         "air_chance": 0.008,
+        "landing_chance": 0.0045,
         "ballistic_chance": 0.00035,
         "build_chance": 0.010,
         "build_choices": ["airbase", "factory", "city", "supply"],
@@ -200,6 +202,7 @@ AI_PERSONALITIES = {
         "operation_troops": 120,
         "max_operations": 1,
         "air_chance": 0.002,
+        "landing_chance": 0.001,
         "ballistic_chance": 0.00015,
         "build_chance": 0.020,
         "build_choices": ["sam", "factory", "city", "sam", "supply"],
@@ -210,6 +213,7 @@ AI_PERSONALITIES = {
         "operation_troops": 150,
         "max_operations": 2,
         "air_chance": 0.0025,
+        "landing_chance": 0.002,
         "ballistic_chance": 0.00018,
         "build_chance": 0.022,
         "build_choices": ["city", "factory", "port", "city", "supply"],
@@ -220,6 +224,7 @@ AI_PERSONALITIES = {
         "operation_troops": 170,
         "max_operations": 3,
         "air_chance": 0.012,
+        "landing_chance": 0.0065,
         "ballistic_chance": 0.00045,
         "build_chance": 0.011,
         "build_choices": ["airbase", "factory", "sam", "supply"],
@@ -230,6 +235,7 @@ AI_PERSONALITIES = {
         "operation_troops": 430,
         "max_operations": 4,
         "air_chance": 0.018,
+        "landing_chance": 0.011,
         "ballistic_chance": 0.00055,
         "build_chance": 0.008,
         "build_choices": ["airbase", "factory", "supply"],
@@ -240,6 +246,7 @@ AI_PERSONALITIES = {
         "operation_troops": 80,
         "max_operations": 1,
         "air_chance": 0.001,
+        "landing_chance": 0.0005,
         "ballistic_chance": 0.00005,
         "build_chance": 0.026,
         "build_choices": ["sam", "sam", "factory", "city", "supply"],
@@ -1931,15 +1938,27 @@ class PixelWars:
                 continue
             personality = AI_PERSONALITIES[faction.personality]
             active_count = active_by_owner.get(fid, 0)
-            nearby_enemies = [owner for owner in self.neighbor_owners(fid) if owner not in {None, fid}]
+            nearby_owners = self.neighbor_owners(fid)
+            nearby_enemies = [owner for owner in nearby_owners if owner not in {None, fid}]
+            empty_expand_chance = (0.082 if self.territory_counts[fid] < 120 else 0.052) * chance_multiplier
+            if None in nearby_owners and active_count < personality["max_operations"] + 1 and random.random() < empty_expand_chance:
+                troops = max(90, int(personality["operation_troops"] * 0.38))
+                if self.create_operation(fid, None, troops, "AI 개척"):
+                    active_by_owner[fid] = active_by_owner.get(fid, 0) + 1
+                    active_count += 1
             if active_count < personality["max_operations"] and random.random() < personality["operation_chance"] * chance_multiplier:
                 target = self.ai_attack_target_owner(fid)
                 troops = int(personality["operation_troops"] * max(0.75, chance_multiplier))
                 if target != fid and self.create_operation(fid, target, troops, "AI 작전"):
                     active_by_owner[fid] = active_by_owner.get(fid, 0) + 1
+                    active_count += 1
             elif not nearby_enemies and active_count < 1 and random.random() < 0.012 * chance_multiplier:
                 troops = max(70, int(personality["operation_troops"] * 0.45))
                 if self.create_operation(fid, None, troops, "AI 개척"):
+                    active_by_owner[fid] = active_by_owner.get(fid, 0) + 1
+                    active_count += 1
+            if active_count < personality["max_operations"] and random.random() < personality["landing_chance"] * chance_multiplier:
+                if self.ai_amphibious_attack(fid):
                     active_by_owner[fid] = active_by_owner.get(fid, 0) + 1
             if random.random() < personality["air_chance"] * chance_multiplier:
                 self.ai_air_attack(fid)
@@ -1993,6 +2012,63 @@ class PixelWars:
         if self.launch_ballistic(target_cell[0], target_cell[1], nuclear=False, owner=fid):
             if target_owner != fid:
                 self.wars.add(frozenset((fid, target_owner)))
+
+    def ai_amphibious_attack(self, fid: int) -> bool:
+        faction = self.factions[fid]
+        if faction.troops < 240:
+            return False
+        target = self.ai_landing_target_cell(fid)
+        if target is None:
+            return False
+        target_owner = self.owner[target[0]][target[1]]
+        start = self.closest_owned_coast(target[0], target[1], fid) or self.closest_launch_coast_from_owned_land(target[0], target[1], fid)
+        landing_site = self.closest_coast(target[0], target[1])
+        if not start or not landing_site or self.owner[landing_site[0]][landing_site[1]] == fid:
+            return False
+        water_path = self.water_path_between_coasts(start, landing_site)
+        if not water_path:
+            return False
+        troops = min(faction.troops, max(120, int(AI_PERSONALITIES[faction.personality]["operation_troops"] * 0.55)))
+        faction.troops -= troops
+        if target_owner is not None and target_owner != fid:
+            self.wars.add(frozenset((fid, target_owner)))
+        route = self.compress_water_path(water_path) + [landing_site]
+        if not route:
+            return False
+        first_x, first_y = route.pop(0)
+        self.units.append(
+            Unit(
+                "landing",
+                fid,
+                start[0],
+                start[1],
+                first_x,
+                first_y,
+                target_cell=landing_site,
+                payload=troops,
+                speed=LANDING_SPEED,
+                operation_target=target_owner,
+                path=route,
+            )
+        )
+        return True
+
+    def ai_landing_target_cell(self, fid: int) -> tuple[int, int] | None:
+        enemies = [owner for owner in range(len(self.factions)) if owner != fid and self.factions[owner].alive and self.territory_counts[owner] > 0]
+        target_owner: int | None
+        if enemies and random.random() < 0.72:
+            target_owner = random.choice(enemies)
+        else:
+            target_owner = None
+        for _ in range(80):
+            x = random.randrange(self.width)
+            y = random.randrange(self.height)
+            if not self.land[x][y] or self.owner[x][y] != target_owner:
+                continue
+            coast = self.closest_coast(x, y)
+            if coast and self.owner[coast[0]][coast[1]] != fid:
+                return x, y
+        return self.random_target_cell(target_owner)
 
     def ai_attack_target_owner(self, fid: int) -> int | None:
         neighbors = [owner for owner in self.neighbor_owners(fid) if owner != fid]
@@ -2482,12 +2558,12 @@ class PixelWars:
         faction.ships += 1
         self.status = "전투함 구매"
 
-    def closest_owned_coast(self, x: int, y: int) -> tuple[int, int] | None:
-        owned = [(cx, cy) for cx in range(self.width) for cy in range(self.height) if self.owner[cx][cy] == PLAYER_ID and self.is_coast(cx, cy)]
+    def closest_owned_coast(self, x: int, y: int, owner: int = PLAYER_ID) -> tuple[int, int] | None:
+        owned = [(cx, cy) for cx in range(self.width) for cy in range(self.height) if self.owner[cx][cy] == owner and self.is_coast(cx, cy)]
         return min(owned, key=lambda p: abs(p[0] - x) + abs(p[1] - y), default=None)
 
-    def closest_launch_coast_from_owned_land(self, x: int, y: int) -> tuple[int, int] | None:
-        owned = [(cx, cy) for cx in range(self.width) for cy in range(self.height) if self.owner[cx][cy] == PLAYER_ID]
+    def closest_launch_coast_from_owned_land(self, x: int, y: int, owner: int = PLAYER_ID) -> tuple[int, int] | None:
+        owned = [(cx, cy) for cx in range(self.width) for cy in range(self.height) if self.owner[cx][cy] == owner]
         coasts = [(cx, cy) for cx in range(self.width) for cy in range(self.height) if self.land[cx][cy] and self.is_coast(cx, cy)]
         if not owned or not coasts:
             return None
@@ -3915,6 +3991,7 @@ class PixelWars:
                     "오염 지역 제외 95% 이상 점령, 모든 적 5픽셀 이하를 2분 유지하면 승리합니다.",
                     "자신의 보유 픽셀이 0이 되면 패배합니다.",
                     "AI는 균형/공격/방어/경제/약탈/극공/극방 성향을 가집니다.",
+                    "AI는 닿아 있는 빈땅을 더 적극적으로 채우고, 성향에 따라 상륙도 시도합니다.",
                     "표준 AI는 같은 시작 자원으로 전선/보급 판단을 천천히 합니다.",
                     "C키를 누르면 세력 순위에 AI 성향과 인접 AI 위협도가 표시됩니다.",
                 ],
